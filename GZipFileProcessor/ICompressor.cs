@@ -2,6 +2,5 @@ namespace GZipFileProcessor;
 
 public interface ICompressor
 {
-    byte[] Compress(byte[] bytes);
-    byte[] Decompress(byte[] bytes);
+    byte[] Process(byte[] bytes);
 }
