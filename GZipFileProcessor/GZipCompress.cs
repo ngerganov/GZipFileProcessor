@@ -9,14 +9,12 @@ public class GZipCompress : ICompressor
         if (bytes == null) 
             throw new ArgumentNullException(nameof(bytes));
 
-        using (var output = new MemoryStream())
+        using var output = new MemoryStream();
+        using (var compress = new GZipStream(output, CompressionMode.Compress))
         {
-            using (var compress = new GZipStream(output, CompressionMode.Compress))
-            {
-                compress.Write(bytes, 0, bytes.Length);
-            }
-
-            return output.ToArray();
+            compress.Write(bytes, 0, bytes.Length);
         }
+
+        return output.ToArray();
     }
 }

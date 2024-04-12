@@ -2,28 +2,16 @@ namespace GZipFileProcessor;
 
 public static class FileManager
 {
-    public static byte[] ReadAllBytes(string filePath)
+    public static int ReadInt32(Stream stream)
     {
-        try
-        {
-            return File.ReadAllBytes(filePath);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error reading file: {ex.Message}");
-            return null;
-        }
+        byte[] bytes = new byte[4];
+        stream.Read(bytes, 0, bytes.Length);
+        return BitConverter.ToInt32(bytes, 0);
     }
 
-    public static void WriteAllBytes(string filePath, byte[] bytes)
+    public static void WriteInt32(Stream stream, int value)
     {
-        try
-        {
-            File.WriteAllBytes(filePath, bytes);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error writing file: {ex.Message}");
-        }
+        byte[] bytes = BitConverter.GetBytes(value);
+        stream.Write(bytes, 0, bytes.Length);
     }
 }

@@ -16,17 +16,15 @@ public class GZipDecompress : ICompressor
         if (bytes == null) 
             throw new ArgumentNullException(nameof(bytes));
 
-        using (var output = new MemoryStream())
+        using var output = new MemoryStream();
+        using (var input = new MemoryStream(bytes))
         {
-            using (var input = new MemoryStream(bytes))
+            using (var decompress = new GZipStream(input, CompressionMode.Decompress))
             {
-                using (var decompress = new GZipStream(input, CompressionMode.Decompress))
-                {
-                    decompress.Copy(output, _bufferSize);
-                }
+                decompress.Copy(output, _bufferSize);
             }
-
-            return output.ToArray();
         }
+
+        return output.ToArray();
     }
 }

@@ -2,6 +2,8 @@
 
 class Program
 {
+    private const int BlockSize = 1024 * 1024;
+
     static void Main(string[] args)
     {
         Console.WriteLine("Welcome to GZipFileProcessor!");
@@ -24,7 +26,7 @@ class Program
             string fileName = Console.ReadLine();
             Console.WriteLine("Please provide the extension of the file (e.g., pdf, txt, docx):");
             string fileExtension = Console.ReadLine();
-            DecompressFile(fileName, fileExtension);
+            DecompressFile(fileName, fileExtension, new GZipDecompress(BlockSize));
         }
         else
         {
@@ -36,46 +38,110 @@ class Program
     {
         string currentDirectory = AppDomain.CurrentDomain.BaseDirectory;
         string sourceFilePath = Path.Combine(currentDirectory, fileName);
-        string destinationFilePath = Path.Combine(currentDirectory, $"{Path.GetFileNameWithoutExtension(fileName)}_compressed.gz");
+        string destinationFilePath =
+            Path.Combine(currentDirectory, $"{Path.GetFileNameWithoutExtension(fileName)}_compressed.gz");
 
-        var processor = new ConcurrentQueueProcessor();
-        using (var fileStream = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read))
+        using (var inputStream = File.OpenRead(sourceFilePath))
+        using (var outputStream = File.Create(destinationFilePath))
         {
-            const int blockSize = 1024 * 1024;
-            var buffer = new byte[blockSize];
-            int bytesRead;
-            while ((bytesRead = fileStream.Read(buffer, 0, buffer.Length)) > 0)
-            {
-                var block = new byte[bytesRead];
-                Array.Copy(buffer, block, bytesRead);
-                processor.Add(block);
-            }
-        }
+            var blockQueue = new ConcurrentBlockQueue();
+            var compressorTasks = new List<Task>();
 
-        processor.CompleteAdding();
-        processor.ProcessQueueAndSaveAsync(compressor, destinationFilePath).Wait();
+            Task.Run(() =>
+            {
+                int index = 0;
+                while (true)
+                {
+                    byte[] buffer = new byte[BlockSize];
+                    int bytesRead = inputStream.Read(buffer, 0, buffer.Length);
+                    if (bytesRead == 0)
+                    {
+                        blockQueue.Complete();
+                        break;
+                    }
+
+                    var block = new Block(buffer.Take(bytesRead).ToArray(), index);
+                    blockQueue.Add(block);
+                    index++;
+                }
+            });
+
+            for (int i = 0; i < 10; i++)
+            {
+                var compressorTask = Task.Run(() =>
+                {
+                    while (true)
+                    {
+                        var block = blockQueue.Next();
+                        if (block == null) break;
+                        byte[] compressedBlock = compressor.Process(block.Data);
+                        lock (outputStream)
+                        {
+                            FileManager.WriteInt32(outputStream, compressedBlock.Length);
+                            outputStream.Write(compressedBlock, 0, compressedBlock.Length);
+                        }
+                    }
+                });
+                compressorTasks.Add(compressorTask);
+            }
+
+            Task.WaitAll(compressorTasks.ToArray());
+        }
 
         Console.WriteLine($"Operation completed successfully. Result saved as {destinationFilePath}");
     }
 
-    static void DecompressFile(string fileName, string fileExtension)
+    static void DecompressFile(string fileName, string fileExtension, ICompressor decompressor)
     {
         string currentDirectory = AppDomain.CurrentDomain.BaseDirectory;
         string sourceFilePath = Path.Combine(currentDirectory, $"{fileName}.gz");
         string destinationFilePath = Path.Combine(currentDirectory, $"{fileName}_decompressed.{fileExtension}");
 
-        byte[] sourceBytes = FileManager.ReadAllBytes(sourceFilePath);
-        if (sourceBytes == null)
+        using (var inputStream = File.OpenRead(sourceFilePath))
+        using (var outputStream = File.Create(destinationFilePath))
         {
-            Console.WriteLine("File not found or unable to read file.");
-            return;
+            var blockQueue = new ConcurrentBlockQueue();
+            var decompressorTasks = new List<Task>();
+
+            Task.Run(() =>
+            {
+                int index = 0;
+                while (true)
+                {
+                    int blockSize = FileManager.ReadInt32(inputStream);
+                    if (blockSize == 0) break;
+
+                    byte[] buffer = new byte[blockSize];
+                    inputStream.Read(buffer, 0, blockSize);
+                    var block = new Block(buffer, index);
+                    blockQueue.Add(block);
+                    index++;
+                }
+
+                blockQueue.Complete();
+            });
+
+            for (int i = 0; i < 10; i++)
+            {
+                var decompressorTask = Task.Run(() =>
+                {
+                    while (true)
+                    {
+                        var block = blockQueue.Next();
+                        if (block == null) break;
+                        byte[] decompressedBlock = decompressor.Process(block.Data);
+                        lock (outputStream)
+                        {
+                            outputStream.Write(decompressedBlock, 0, decompressedBlock.Length);
+                        }
+                    }
+                });
+                decompressorTasks.Add(decompressorTask);
+            }
+
+            Task.WaitAll(decompressorTasks.ToArray());
         }
 
-        ICompressor compressor = new GZipDecompress(bufferSize: 1024);
-
-        byte[] resultBytes = compressor.Process(sourceBytes);
-
-        FileManager.WriteAllBytes(destinationFilePath, resultBytes);
         Console.WriteLine($"File decompressed successfully. Result saved as {destinationFilePath}");
     }
 }
